@@ -1,0 +1,120 @@
+## What this project does
+
+This project introduces **GPR-ML**, a machine-learning framework for **predicting gene–protein–reaction (GPR) associations** in genome-scale metabolic models.
+
+Given a metabolic reaction and a candidate gene, the model predicts whether that gene is likely to catalyze the reaction.
+Based on these predictions, the framework produces **ranked candidate genes** for reactions whose GPR rules may be incomplete or incorrect.
+
+The method is demonstrated on the *E. coli* iJO1366 metabolic network.
+
+---
+
+## Why this problem matters
+
+GPR rules are a core component of genome-scale metabolic models.
+They define which genes activate which reactions and directly determine:
+
+* feasible flux distributions
+* gene knockout predictions
+* pathway activity inference
+* model accuracy and interpretability
+
+Despite their importance, GPR rules are:
+
+* manually curated
+* heterogeneous across models
+* incomplete for many reactions
+* difficult to maintain at scale
+
+Small errors or omissions in GPRs can silently propagate into incorrect simulation results.
+Yet, systematic and automated approaches for validating or extending GPR rules are still limited.
+
+This project addresses that gap by learning **gene–reaction associations directly from the structure of the metabolic network itself**, without requiring external omics data.
+
+---
+
+## How the method works
+
+The problem is formulated as a **reaction–gene link prediction task**.
+
+For each reaction ( r ) and gene ( g ), the model predicts:
+
+> Does gene ( g ) belong to the GPR of reaction ( r )?
+
+### Data representation
+
+The method relies exclusively on information already contained in the metabolic model:
+
+* reaction stoichiometry
+* metabolite identities
+* pathway (subsystem) annotations
+* curated gene–reaction associations
+
+Each gene is represented by a **metabolic fingerprint**:
+the set of metabolites and pathways associated with reactions already linked to that gene.
+
+Each reaction is represented by its participating metabolites and pathway context.
+
+From these, biologically meaningful, interpretable features are constructed, such as:
+
+* overlap between reaction metabolites and a gene’s metabolic fingerprint
+* biochemical neighborhood similarity
+* pathway consistency
+
+No sequence data, expression data, or external annotations are required.
+
+---
+
+## Machine-learning approach
+
+Two models are used:
+
+1. **Logistic Regression**
+
+   * serves as an interpretable baseline
+   * highlights which biochemical signals drive predictions
+
+2. **XGBoost**
+
+   * captures non-linear interactions between features
+   * improves ranking performance and recall
+
+To ensure realistic evaluation, models are trained and tested using a **reaction-wise split**:
+entire reactions are held out during testing, preventing information leakage and testing true generalization.
+
+---
+
+## What the output looks like
+
+For each reaction, the framework produces:
+
+* a probability score for each candidate gene
+* a ranked list of **top-K predicted missing genes**
+* global performance metrics (PR-AUC, Recall@K)
+
+These outputs can be used to:
+
+* assist manual GPR curation
+* flag reactions for further experimental validation
+* improve metabolic model completeness
+* support automated model refinement workflows
+
+---
+
+## Key design principles
+
+* **Biology-aware**: uses metabolic network structure rather than generic embeddings
+* **Interpretable**: feature contributions can be inspected and explained
+* **Reproducible**: deterministic reaction-wise splits are stored and reused
+* **Lightweight**: runs on standard CPUs without deep learning infrastructure
+
+---
+
+## Scope and extensions
+
+While demonstrated on *E. coli* iJO1366, the approach is model-agnostic and can be extended to:
+
+* other bacterial models
+* yeast or human metabolic networks
+* GPR logic refinement (AND / OR inference)
+* integration with model quality-control pipelines
