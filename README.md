@@ -66,17 +66,6 @@ It produces:
 
 ---
 
-## 📊 Evaluation
-
-**Reaction-wise generalization** (no leakage across reactions):
-
-• PR-AUC
-• ROC-AUC
-• Recall@5 / Recall@10 / Recall@20
-• Ranked candidate gene lists
-
----
-
 ## 🧬 Dataset
 
 Currently supported:
