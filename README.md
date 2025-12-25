@@ -93,7 +93,7 @@ src/
 ## ⚙️ Installation
 
 ```bash
-git clone https://github.com/<your-username>/gpr-ml.git
+git clone https://github.com/seirana/ML-Based-Inference-of-GPR-Rules-in-Metabolic-Networks.git
 cd gpr-ml
 pip install -r requirements.txt
 ```
