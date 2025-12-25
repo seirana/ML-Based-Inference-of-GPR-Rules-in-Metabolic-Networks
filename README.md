@@ -73,22 +73,21 @@ Currently supported:
 ## 📁 Repository structure
 
 ```
-gpr-ml/
-  data/
-    raw/
-    processed/
-  reports/
-    metrics/
-    models/
-    candidates/
-  src/
-    00_parse_model.py
-    01_build_pairs.py
-    02_features.py
-    03_train_logreg.py
-    04_train_xgb.py
-    06_rank_candidates.py
-    utils.py
+data/
+  raw/
+  processed/
+reports/
+  metrics/
+  models/
+  candidates/
+src/
+  00_parse_model.py
+  01_build_pairs.py
+  02_features.py
+  03_train_logreg.py
+  04_train_xgb.py
+  05_rank_candidates.py
+  utils.py
 ```
 
 ---
