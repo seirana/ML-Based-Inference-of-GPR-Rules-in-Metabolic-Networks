@@ -28,9 +28,7 @@ They are manually curated, incomplete, and error-prone, yet every flux simulatio
 
 For every reaction (r) and gene (g):
 
-[
-\text{Predict whether } g \text{ belongs to the GPR of } r
-]
+Predict whether g belongs to the GPR of r
 
 It produces:
 
