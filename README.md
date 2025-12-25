@@ -16,7 +16,7 @@ It is designed as a clean, reproducible baseline for **automatic GPR rule comple
 ## 🔬 Why this matters
 
 Gene–Protein–Reaction (GPR) rules define which genes activate metabolic reactions.
-They are manually curated, incomplete, and error-prone — yet every flux simulation depends on them.
+They are manually curated, incomplete, and error-prone, yet every flux simulation depends on them.
 
 **GPR-ML** provides:
 
