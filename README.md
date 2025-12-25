@@ -3,10 +3,6 @@
 
 > **Predict missing and incorrect GPR rules in genome-scale metabolic models using interpretable machine learning.**
 
----
-
-# GPR-ML
-
 **GPR-ML** is a lightweight, interpretable machine-learning framework that learns **gene–reaction relationships directly from metabolic network structure** and predicts **missing candidate genes for metabolic reactions**.
 
 It is designed as a clean, reproducible baseline for **automatic GPR rule completion and correction**.
