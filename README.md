@@ -84,7 +84,8 @@ src/
   02_features.py
   03_train_logreg.py
   04_train_xgb.py
-  05_rank_candidates.py
+  05_evaluate.py
+  06_rank_candidates.py
   utils.py
 ```
 
