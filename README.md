@@ -1,5 +1,5 @@
 
-# 🧬 Macgine Learning Based Inference of Gene-Protein-Reaction Rules in Metabolic Networks
+# 🧬 GPR-ML:Macgine Learning Based Inference of Gene-Protein-Reaction Rules in Metabolic Networks
 
 > **Predict missing and incorrect GPR rules in genome-scale metabolic models using interpretable machine learning.**
 
