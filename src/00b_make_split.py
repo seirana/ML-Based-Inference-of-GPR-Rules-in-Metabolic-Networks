@@ -4,6 +4,15 @@
 @author: seirana
 """
 
+'''
+Loads a reaction-level table (reactions.parquet) that was previously generated from an SBML metabolic model.
+Splits the reactions into training and test sets using:
+a fixed random seed
+a configurable test fraction
+Saves the split (reaction IDs or subsets) to a JSON file for reproducible downstream experiments.
+Prints a short summary of the split sizes.
+'''
+
 from __future__ import annotations
 
 import argparse
