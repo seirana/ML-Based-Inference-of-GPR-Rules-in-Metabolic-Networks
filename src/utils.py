@@ -24,6 +24,16 @@ from typing import Any, Dict, Tuple, Union
 
 PathLike = Union[str, Path]
 
+
+FEATURE_COLS: List[str] = [
+    "jacc_mets",
+    "overlap_mets",
+    "n_mets_rxn",
+    "n_mets_gene_fp",
+    "subsystem_match",
+    "n_subsys_gene_fp",
+]
+
 def ensure_dir(path: PathLike) -> Path:
     """Create directory (and parents) if it does not exist; return Path."""
     p = Path(path)
@@ -89,16 +99,6 @@ def save_split(train_df: pd.DataFrame, test_df: pd.DataFrame, out_path: PathLike
     ensure_dir(out_path.parent)
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
-
-
-FEATURE_COLS: List[str] = [
-    "jacc_mets",
-    "overlap_mets",
-    "n_mets_rxn",
-    "n_mets_gene_fp",
-    "subsystem_match",
-    "n_subsys_gene_fp",
-]
 
 
 def hit_at_k(df: pd.DataFrame, k: int) -> float:
