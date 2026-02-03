@@ -5,18 +5,10 @@
 """
 
 '''
-Seed randomness (seed_everything and np.random.default_rng)
-Load:
-reactions.parquet (must include columns like reaction_id, genes, metabolites, subsystem)
-genes.parquet (must include gene_id)
-Build indices (subsys_to_genes, met_to_genes)
-For each reaction r:
-pos = set(r["genes"])
-skip if no genes
-Add positives: one row per gene in pos labeled 1
-Sample negatives: neg_per_pos * len(pos) genes labeled 0
-Create a dataframe, deduplicate (reaction_id, gene_id) pairs
-Save to pairs.parquet
+This script builds a labeled dataset of (reaction, gene) pairs for supervised learning (or evaluation) of which genes belong to which reactions (i.e., GPR association). It creates:
+positive pairs: genes that are already curated/known for a reaction (label = 1)
+negative pairs: genes sampled as “hard negatives” (plausible-but-wrong genes) (label = 0)
+and saves everything to pairs.parquet.
 '''
 
 from __future__ import annotations
