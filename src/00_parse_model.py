@@ -4,6 +4,21 @@
 @author: seirana
 """
 
+'''
+Reads an SBML metabolic model file via cobra.io.read_sbml_model(...).
+For every reaction in the model:
+collects reaction metadata (id, name, subsystem)
+extracts the GPR rule (gene–protein–reaction rule, boolean rule like “b0002 and (b0003 or b0004)”)
+lists all genes referenced by that reaction (rxn.genes)
+lists all metabolites participating in the reaction (rxn.metabolites), using metabolite IDs including compartment suffix (e.g. glc__D_c)
+Builds gene fingerprints by aggregating across all reactions each gene appears in:
+metabolites_fp: union of all metabolites in reactions catalyzed by that gene
+subsystems_fp: union of subsystems of those reactions (if available)
+Saves both tables as Parquet files:
+reactions.parquet
+genes.parquet
+'''
+
 from __future__ import annotations
 
 import argparse
