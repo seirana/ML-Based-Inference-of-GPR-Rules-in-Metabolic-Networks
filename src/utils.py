@@ -17,6 +17,79 @@ from sklearn.model_selection import GroupShuffleSplit
 
 from utils import ensure_dir, save_json, seed_everything
 
+import json
+import os
+import random
+from typing import Any, Dict, Tuple, Union
+
+PathLike = Union[str, Path]
+
+def ensure_dir(path: PathLike) -> Path:
+    """Create directory (and parents) if it does not exist; return Path."""
+    p = Path(path)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def save_json(obj: Dict[str, Any], path: PathLike, indent: int = 2) -> None:
+    """Write a JSON file to disk."""
+    p = Path(path)
+    ensure_dir(p.parent)
+    with p.open("w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=indent)
+
+
+def seed_everything(seed: int) -> None:
+    """Seed Python, NumPy (and hash seed) for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
+def make_reaction_split(
+    reactions_df: pd.DataFrame,
+    seed: int = 13,
+    test_size: float = 0.2,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Reaction-wise (grouped) split: ensures the same reaction_id does not appear in both train and test.
+    Expects reactions_df to contain a 'reaction_id' column.
+    """
+    if "reaction_id" not in reactions_df.columns:
+        raise ValueError("reactions_df must contain a 'reaction_id' column")
+
+    # Each row is a reaction already, but we still use grouped split for consistency across the project
+    X = np.zeros((len(reactions_df), 1), dtype=np.float32)
+    y = np.zeros((len(reactions_df),), dtype=int)
+    groups = reactions_df["reaction_id"].values
+
+    gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
+    train_idx, test_idx = next(gss.split(X, y, groups=groups))
+
+    train_df = reactions_df.iloc[train_idx].reset_index(drop=True)
+    test_df = reactions_df.iloc[test_idx].reset_index(drop=True)
+    return train_df, test_df
+
+
+def save_split(train_df: pd.DataFrame, test_df: pd.DataFrame, out_path: PathLike) -> None:
+    """
+    Save train/test split as JSON containing reaction IDs.
+    Expects DataFrames to contain 'reaction_id'.
+    """
+    for df, name in [(train_df, "train_df"), (test_df, "test_df")]:
+        if "reaction_id" not in df.columns:
+            raise ValueError(f"{name} must contain a 'reaction_id' column")
+
+    payload = {
+        "train_reactions": train_df["reaction_id"].tolist(),
+        "test_reactions": test_df["reaction_id"].tolist(),
+    }
+
+    out_path = Path(out_path)
+    ensure_dir(out_path.parent)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
 
 FEATURE_COLS: List[str] = [
     "jacc_mets",
