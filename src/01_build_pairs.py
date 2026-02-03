@@ -4,6 +4,21 @@
 @author: seirana
 """
 
+'''
+Seed randomness (seed_everything and np.random.default_rng)
+Load:
+reactions.parquet (must include columns like reaction_id, genes, metabolites, subsystem)
+genes.parquet (must include gene_id)
+Build indices (subsys_to_genes, met_to_genes)
+For each reaction r:
+pos = set(r["genes"])
+skip if no genes
+Add positives: one row per gene in pos labeled 1
+Sample negatives: neg_per_pos * len(pos) genes labeled 0
+Create a dataframe, deduplicate (reaction_id, gene_id) pairs
+Save to pairs.parquet
+'''
+
 from __future__ import annotations
 
 import argparse
