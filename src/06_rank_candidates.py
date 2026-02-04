@@ -3,6 +3,14 @@
 """
 @author: seirana
 """
+'''
+Rank candidate genes for each metabolic reaction using a trained gene–reaction association model.
+
+For every reaction in reactions.parquet, the script builds a plausible candidate pool of genes
+(using subsystem and shared-metabolite neighborhoods), computes the same engineered features used
+during model training, scores each candidate with a pretrained model (default: XGBoost), and
+exports the top-K ranked genes per reaction to a CSV file for downstream inspection and validation.
+'''
 
 from __future__ import annotations
 
