@@ -4,6 +4,16 @@
 @author: seirana
 """
 
+'''
+Evaluate a trained gene–reaction association model on a reaction-wise held-out test set.
+
+The script loads engineered pair-level features (features.parquet), constructs a grouped
+train/test split by reaction_id (to avoid leakage across the same reaction), loads a
+pretrained model from a .joblib file, and computes PR-AUC (average precision), ROC-AUC,
+and reaction-level hit@k metrics (whether at least one true gene is ranked in the top-k
+candidates per reaction). Results are saved as a JSON report for reproducibility.
+'''
+
 from __future__ import annotations
 
 import argparse
