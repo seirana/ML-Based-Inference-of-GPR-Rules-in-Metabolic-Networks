@@ -3,7 +3,15 @@
 """
 @author: seirana
 """
+'''
+Train and evaluate a Logistic Regression baseline for predicting gene–reaction associations.
 
+The script loads engineered features for labeled (reaction, gene) pairs, applies a predefined
+reaction-wise train/test split (to avoid leakage across the same reaction), fits a class-balanced
+Logistic Regression model, and evaluates performance using PR-AUC, ROC-AUC, and reaction-level
+hit@k (whether a true gene is ranked in the top-k predictions per reaction). It saves metrics,
+the trained model, and the learned coefficients for interpretability.
+'''
 from __future__ import annotations
 
 import argparse
