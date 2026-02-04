@@ -3,6 +3,16 @@
 """
 @author: seirana
 """
+'''
+Train and evaluate an XGBoost model for predicting gene–reaction associations.
+
+The script loads engineered features for labeled (reaction, gene) pairs and performs
+reaction-wise splitting (GroupShuffleSplit) to avoid leakage across the same reaction.
+An additional reaction-wise validation split is created from the training set to enable
+early stopping. The model is evaluated using PR-AUC (average precision), ROC-AUC, and
+reaction-level hit@k (whether at least one true gene is ranked in the top-k per reaction).
+Metrics, the trained model, and feature importances are saved to disk.
+'''
 
 from __future__ import annotations
 
