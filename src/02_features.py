@@ -3,6 +3,15 @@
 """
 @author: seirana
 """
+'''
+Generate feature vectors for labeled (reaction, gene) pairs.
+
+For each reaction–gene pair from pairs.parquet, this script derives simple,
+interpretable features based on the overlap between the reaction’s metabolite set
+and the gene’s metabolite/subsystem "fingerprints" (constructed from all reactions
+associated with the gene). The resulting feature table (features.parquet) is used
+for downstream supervised learning and evaluation of gene–reaction associations.
+'''
 
 from __future__ import annotations
 
