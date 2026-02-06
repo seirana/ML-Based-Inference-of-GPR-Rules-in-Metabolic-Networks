@@ -112,16 +112,8 @@ data/raw/iJO1366.xml
 Then run:
 
 ```bash
-python src/00_parse_model.py --model data/raw/iJO1366.xml
-python src/00_parse_model.py --model data/raw/iJO1366.xml --outdir data/processed
-python src/00b_make_split.py --procdir data/processed --out data/processed/split_reactions.json --seed 13 --test_size 0.2
-python src/01_build_pairs.py --procdir data/processed --outdir data/processed --neg_per_pos 10
-python src/02_features.py --procdir data/processed --outdir data/processed
-python src/03_train_logreg.py --procdir data/processed
-python src/04_train_xgb.py --procdir data/processed
-python src/05_evaluate.py --procdir data/processed --model_path reports/models/xgb.joblib
-python src/05_evaluate.py --procdir data/processed --model_path reports/models/logreg.joblib
-python src/06_rank_candidates.py --procdir data/processed --model_path reports/models/xgb.joblib --outdir reports/candidates --topk 10
+chmod +x run_pipeline.sh
+./run_pipeline.sh
 ```
 
 ---
