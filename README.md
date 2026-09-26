@@ -199,7 +199,7 @@ reports/candidates/
 reports/run_metadata.json
 ```
 
-Generated model/metric/candidate outputs are ignored by Git by default.
+Generated model/metric/candidate outputs are ignored by Git by default. The pipeline also records the Git commit SHA when available and a SHA-256 checksum of the input SBML file in `reports/run_metadata.json`.
 
 ## Metrics
 
