@@ -1,108 +1,164 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-
-'''
-Reads an SBML metabolic model file via cobra.io.read_sbml_model(...).
-For every reaction in the model:
-collects reaction metadata (id, name, subsystem)
-extracts the GPR rule (gene–protein–reaction rule, boolean rule like “b0002 and (b0003 or b0004)”)
-lists all genes referenced by that reaction (rxn.genes)
-lists all metabolites participating in the reaction (rxn.metabolites), using metabolite IDs including compartment suffix (e.g. glc__D_c)
-Builds gene fingerprints by aggregating across all reactions each gene appears in:
-metabolites_fp: union of all metabolites in reactions catalyzed by that gene
-subsystems_fp: union of subsystems of those reactions (if available)
-Saves both tables as Parquet files:
-reactions.parquet
-genes.parquet
-'''
+"""Parse an SBML model into reaction and gene inventory tables."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 import cobra
 import pandas as pd
 from tqdm import tqdm
 
-from utils import ensure_dir
+from gpr_ml import ensure_dir
 
 
-def reaction_metabolites(reaction: cobra.Reaction) -> Set[str]:
-    # Use metabolite IDs (include compartment suffix like _c/_p/_e)
-    return {m.id for m in reaction.metabolites.keys()}
+def reaction_metabolites(reaction: cobra.Reaction) -> set[str]:
+    return {metabolite.id for metabolite in reaction.metabolites}
 
 
-def parse_model(model_path: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def parse_model(
+    model_path: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     model = cobra.io.read_sbml_model(str(model_path))
 
-    # Reactions table
-    rows_rxn: List[Dict] = []
-    for rxn in model.reactions:
-        gpr = (rxn.gene_reaction_rule or "").strip()
-        genes = sorted({g.id for g in rxn.genes})  # genes referenced in GPR
-        mets = sorted(reaction_metabolites(rxn))
-        rows_rxn.append(
+    reaction_rows: list[dict[str, object]] = []
+    gene_reaction_counts: dict[str, int] = {}
+
+    for reaction in tqdm(
+        model.reactions,
+        desc="Parsing reactions",
+    ):
+        genes = sorted(
+            {gene.id for gene in reaction.genes}
+        )
+        metabolites = sorted(
+            reaction_metabolites(reaction)
+        )
+        subsystem = getattr(
+            reaction,
+            "subsystem",
+            None,
+        )
+
+        reaction_rows.append(
             {
-                "reaction_id": rxn.id,
-                "reaction_name": rxn.name,
-                "subsystem": getattr(rxn, "subsystem", None),
-                "gpr_rule": gpr,
+                "reaction_id": reaction.id,
+                "reaction_name": reaction.name,
+                "subsystem": (
+                    str(subsystem)
+                    if subsystem
+                    else ""
+                ),
+                "gpr_rule": (
+                    reaction.gene_reaction_rule
+                    or ""
+                ).strip(),
                 "genes": genes,
-                "metabolites": mets,
+                "metabolites": metabolites,
                 "n_genes": len(genes),
-                "n_metabolites": len(mets),
+                "n_metabolites": len(metabolites),
             }
         )
-    reactions_df = pd.DataFrame(rows_rxn)
 
-    # Gene fingerprints: metabolites/subsystems seen in reactions catalyzed by that gene
-    gene_to_mets: Dict[str, Set[str]] = {}
-    gene_to_subsys: Dict[str, Set[str]] = {}
+        for gene_id in genes:
+            gene_reaction_counts[gene_id] = (
+                gene_reaction_counts.get(
+                    gene_id,
+                    0,
+                )
+                + 1
+            )
 
-    for rxn in tqdm(model.reactions, desc="Building gene fingerprints"):
-        mets = reaction_metabolites(rxn)
-        subsys = getattr(rxn, "subsystem", None)
-        for g in rxn.genes:
-            gid = g.id
-            gene_to_mets.setdefault(gid, set()).update(mets)
-            if subsys:
-                gene_to_subsys.setdefault(gid, set()).add(str(subsys))
+    reactions_df = pd.DataFrame(
+        reaction_rows
+    )
+    if reactions_df.empty:
+        raise ValueError(
+            "The SBML model contains no reactions."
+        )
+    if reactions_df[
+        "reaction_id"
+    ].duplicated().any():
+        raise ValueError(
+            "The SBML model contains duplicate reaction IDs."
+        )
 
     genes_df = pd.DataFrame(
         [
             {
-                "gene_id": gid,
-                "metabolites_fp": sorted(list(mets)),
-                "subsystems_fp": sorted(list(gene_to_subsys.get(gid, set()))),
-                "n_mets_fp": len(mets),
-                "n_subsys_fp": len(gene_to_subsys.get(gid, set())),
+                "gene_id": gene_id,
+                "n_curated_reactions": count,
             }
-            for gid, mets in gene_to_mets.items()
-        ]
+            for gene_id, count
+            in sorted(
+                gene_reaction_counts.items()
+            )
+        ],
+        columns=[
+            "gene_id",
+            "n_curated_reactions",
+        ],
     )
 
     return reactions_df, genes_df
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Parse an SBML metabolic model into "
+            "GPR-ML reaction/gene tables."
+        )
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        type=Path,
+        help="Path to an SBML model, e.g. data/raw/iJO1366.xml",
+    )
+    parser.add_argument(
+        "--outdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    return parser
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, type=str, help="Path to iJO1366 SBML file (e.g., data/raw/iJO1366.xml)")
-    ap.add_argument("--outdir", default="data/processed", type=str)
-    args = ap.parse_args()
+    args = build_parser().parse_args()
+    if not args.model.exists():
+        raise FileNotFoundError(
+            f"Model file not found: {args.model}"
+        )
 
     outdir = ensure_dir(args.outdir)
-    reactions_df, genes_df = parse_model(Path(args.model))
+    reactions_df, genes_df = parse_model(
+        args.model
+    )
 
-    reactions_df.to_parquet(outdir / "reactions.parquet", index=False)
-    genes_df.to_parquet(outdir / "genes.parquet", index=False)
+    reactions_path = (
+        outdir / "reactions.parquet"
+    )
+    genes_path = outdir / "genes.parquet"
 
-    print(f"Saved: {outdir/'reactions.parquet'} ({len(reactions_df)} reactions)")
-    print(f"Saved: {outdir/'genes.parquet'} ({len(genes_df)} genes)")
+    reactions_df.to_parquet(
+        reactions_path,
+        index=False,
+    )
+    genes_df.to_parquet(
+        genes_path,
+        index=False,
+    )
+
+    print(
+        f"Saved: {reactions_path} "
+        f"({len(reactions_df)} reactions)"
+    )
+    print(
+        f"Saved: {genes_path} "
+        f"({len(genes_df)} genes)"
+    )
 
 
 if __name__ == "__main__":
