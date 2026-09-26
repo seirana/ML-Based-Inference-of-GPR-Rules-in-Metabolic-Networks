@@ -1,193 +1,335 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-'''
-Rank candidate genes for each metabolic reaction using a trained gene–reaction association model.
-
-For every reaction in reactions.parquet, the script builds a plausible candidate pool of genes
-(using subsystem and shared-metabolite neighborhoods), computes the same engineered features used
-during model training, scores each candidate with a pretrained model (default: XGBoost), and
-exports the top-K ranked genes per reaction to a CSV file for downstream inspection and validation.
-'''
+"""Rank candidate genes using the trained model and training-only reference context."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 import joblib
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from utils import ensure_dir
+from gpr_ml import (
+    FEATURE_COLS,
+    build_reference_indices,
+    ensure_dir,
+    load_split,
+    score_model,
+)
+from gpr_ml.core import pair_features
 
 
-FEATURE_COLS = [
-    "jacc_mets",
-    "overlap_mets",
-    "n_mets_rxn",
-    "n_mets_gene_fp",
-    "subsystem_match",
-    "n_subsys_gene_fp",
-]
-
-
-def jaccard(a: Set[str], b: Set[str]) -> float:
-    if not a and not b:
-        return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return float(inter) / float(union) if union else 0.0
-
-
-def build_indices(reactions_df: pd.DataFrame) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]]]:
-    subsys_to_genes: Dict[str, Set[str]] = {}
-    met_to_genes: Dict[str, Set[str]] = {}
-
-    for _, row in reactions_df.iterrows():
-        genes = set(row["genes"])
-        subsys = row["subsystem"]
-        if subsys and isinstance(subsys, str):
-            subsys_to_genes.setdefault(subsys, set()).update(genes)
-        for met in row["metabolites"]:
-            met_to_genes.setdefault(met, set()).update(genes)
-
-    return subsys_to_genes, met_to_genes
+def _as_set(value: object) -> set[str]:
+    if isinstance(value, (list, tuple, set, np.ndarray)):
+        return {str(item) for item in value}
+    if value is None:
+        return set()
+    return {str(value)}
 
 
 def candidate_pool(
-    r: pd.Series,
-    all_genes: np.ndarray,
-    subsys_to_genes: Dict[str, Set[str]],
-    met_to_genes: Dict[str, Set[str]],
+    reaction: pd.Series,
+    *,
+    indices: dict[str, object],
     max_candidates: int,
     rng: np.random.Generator,
-) -> List[str]:
-    pos = set(r["genes"])
-    cand: Set[str] = set()
+) -> list[str]:
+    if max_candidates <= 0:
+        raise ValueError(
+            "max_candidates must be greater than 0"
+        )
 
-    subsys = r["subsystem"]
-    if subsys and isinstance(subsys, str) and subsys in subsys_to_genes:
-        cand |= subsys_to_genes[subsys]
+    curated = _as_set(
+        reaction["genes"]
+    )
+    candidates: set[str] = set()
 
-    for met in r["metabolites"]:
-        if met in met_to_genes:
-            cand |= met_to_genes[met]
+    subsystem = (
+        reaction["subsystem"]
+        if isinstance(
+            reaction["subsystem"],
+            str,
+        )
+        else ""
+    )
+    if subsystem:
+        candidates.update(
+            indices[
+                "subsystem_to_genes"
+            ].get(subsystem, set())
+        )
 
-    cand -= pos
+    for metabolite in _as_set(
+        reaction["metabolites"]
+    ):
+        candidates.update(
+            indices[
+                "metabolite_to_genes"
+            ].get(metabolite, set())
+        )
 
-    # Keep it bounded for speed; if still too big, sample
-    cand = list(cand)
-    if len(cand) > max_candidates:
-        cand = rng.choice(cand, size=max_candidates, replace=False).tolist()
+    candidates -= curated
 
-    # If empty, fallback to random global sampling (bounded)
-    if len(cand) == 0:
-        cand = rng.choice(all_genes, size=min(max_candidates, len(all_genes)), replace=False).tolist()
-        cand = [g for g in cand if g not in pos]
+    if not candidates:
+        candidates.update(
+            indices["gene_vocabulary"]
+        )
+        candidates -= curated
 
-    return cand
+    ordered = np.asarray(
+        sorted(candidates),
+        dtype=str,
+    )
+    if len(ordered) > max_candidates:
+        ordered = rng.choice(
+            ordered,
+            size=max_candidates,
+            replace=False,
+        )
+
+    return sorted(
+        map(str, ordered.tolist())
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Rank candidate genes for each reaction "
+            "using training-only reference fingerprints."
+        )
+    )
+    parser.add_argument(
+        "--procdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--model_path",
+        default=Path(
+            "reports/models/xgb.joblib"
+        ),
+        type=Path,
+    )
+    parser.add_argument(
+        "--outdir",
+        default=Path("reports/candidates"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--topk",
+        default=10,
+        type=int,
+    )
+    parser.add_argument(
+        "--max_candidates",
+        default=3000,
+        type=int,
+    )
+    parser.add_argument(
+        "--seed",
+        default=13,
+        type=int,
+    )
+    parser.add_argument(
+        "--min_curated_genes",
+        default=1,
+        type=int,
+    )
+    parser.add_argument(
+        "--reaction_scope",
+        choices=[
+            "all",
+            "test",
+            "train",
+        ],
+        default="all",
+    )
+    return parser
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--procdir", default="data/processed", type=str)
-    ap.add_argument("--model_path", default="reports/models/xgb.joblib", type=str)
-    ap.add_argument("--outdir", default="reports/candidates", type=str)
-    ap.add_argument("--topk", default=10, type=int)
-    ap.add_argument("--max_candidates", default=3000, type=int, help="Candidate pool size per reaction")
-    ap.add_argument("--seed", default=13, type=int)
-
-    # Optional: rank only reactions with >= this many curated genes (avoid trivial singletons)
-    ap.add_argument("--min_curated_genes", default=1, type=int)
-
-    args = ap.parse_args()
-
-    rng = np.random.default_rng(args.seed)
-    procdir = Path(args.procdir)
-    outdir = ensure_dir(args.outdir)
-
-    reactions_df = pd.read_parquet(procdir / "reactions.parquet")
-    genes_df = pd.read_parquet(procdir / "genes.parquet")
-
-    all_genes = genes_df["gene_id"].values
-    gene_to_metsfp = {g.gene_id: set(g.metabolites_fp) for g in genes_df.itertuples(index=False)}
-    gene_to_subsysfp = {g.gene_id: set(g.subsystems_fp) for g in genes_df.itertuples(index=False)}
-
-    subsys_to_genes, met_to_genes = build_indices(reactions_df)
-
-    model = joblib.load(args.model_path)
-    use_predict_proba = hasattr(model, "predict_proba")
-
-    rows_out = []
-    for _, r in tqdm(reactions_df.iterrows(), total=len(reactions_df), desc="Ranking candidates"):
-        curated = set(r["genes"])
-        if len(curated) < args.min_curated_genes:
-            continue
-
-        rm = set(r["metabolites"])
-        subsys = r["subsystem"] if isinstance(r["subsystem"], str) else ""
-
-        cands = candidate_pool(
-            r=r,
-            all_genes=all_genes,
-            subsys_to_genes=subsys_to_genes,
-            met_to_genes=met_to_genes,
-            max_candidates=args.max_candidates,
-            rng=rng,
+    args = build_parser().parse_args()
+    if args.topk <= 0:
+        raise ValueError(
+            "topk must be greater than 0"
+        )
+    if args.min_curated_genes < 0:
+        raise ValueError(
+            "min_curated_genes must be non-negative"
         )
 
-        feats = []
-        for g in cands:
-            gm = gene_to_metsfp.get(g, set())
-            gsub = gene_to_subsysfp.get(g, set())
-            inter = len(rm & gm)
-            feats.append(
-                [
-                    jaccard(rm, gm),
-                    inter,
-                    len(rm),
-                    len(gm),
-                    1 if (subsys and subsys in gsub) else 0,
-                    len(gsub),
-                ]
-            )
+    rng = np.random.default_rng(
+        args.seed
+    )
+    outdir = ensure_dir(args.outdir)
 
-        if len(feats) == 0:
+    reactions_df = pd.read_parquet(
+        args.procdir / "reactions.parquet"
+    )
+    train_reactions, test_reactions = load_split(
+        args.procdir
+        / "split_reactions.json"
+    )
+    train_set = set(train_reactions)
+    test_set = set(test_reactions)
+
+    reference_indices = (
+        build_reference_indices(
+            reactions_df,
+            train_reactions,
+        )
+    )
+
+    if args.reaction_scope == "test":
+        target_df = reactions_df[
+            reactions_df[
+                "reaction_id"
+            ].astype(str).isin(test_set)
+        ].copy()
+    elif args.reaction_scope == "train":
+        target_df = reactions_df[
+            reactions_df[
+                "reaction_id"
+            ].astype(str).isin(train_set)
+        ].copy()
+    else:
+        target_df = reactions_df.copy()
+
+    model = joblib.load(
+        args.model_path
+    )
+    rows: list[dict[str, object]] = []
+
+    for _, reaction in tqdm(
+        target_df.iterrows(),
+        total=len(target_df),
+        desc="Ranking candidates",
+    ):
+        curated = _as_set(
+            reaction["genes"]
+        )
+        if len(curated) < (
+            args.min_curated_genes
+        ):
             continue
 
-        X = np.asarray(feats, dtype=np.float32)
-        if use_predict_proba:
-            scores = model.predict_proba(X)[:, 1]
-        else:
-            # fallback for models without predict_proba
-            scores = model.predict(X)
+        candidates = candidate_pool(
+            reaction,
+            indices=reference_indices,
+            max_candidates=(
+                args.max_candidates
+            ),
+            rng=rng,
+        )
+        if not candidates:
+            continue
 
-        # Take topK
-        order = np.argsort(-scores)
-        top = order[: args.topk]
+        feature_rows = [
+            pair_features(
+                reaction,
+                gene_id,
+                indices=reference_indices,
+            )
+            for gene_id in candidates
+        ]
+        feature_frame = pd.DataFrame(
+            feature_rows,
+            columns=FEATURE_COLS,
+        )
+        scores = score_model(
+            model,
+            feature_frame.to_numpy(
+                dtype=np.float32
+            ),
+        )
 
-        for idx in top:
-            rows_out.append(
+        order = np.argsort(-scores)[
+            : args.topk
+        ]
+        for rank, index in enumerate(
+            order,
+            start=1,
+        ):
+            rows.append(
                 {
-                    "reaction_id": r["reaction_id"],
-                    "reaction_name": r["reaction_name"],
-                    "subsystem": subsys,
-                    "candidate_gene": cands[idx],
-                    "score": float(scores[idx]),
-                    "curated_genes": ";".join(sorted(curated)),
-                    "n_curated_genes": int(len(curated)),
+                    "reaction_id": str(
+                        reaction[
+                            "reaction_id"
+                        ]
+                    ),
+                    "reaction_name": str(
+                        reaction.get(
+                            "reaction_name",
+                            "",
+                        )
+                    ),
+                    "subsystem": (
+                        reaction[
+                            "subsystem"
+                        ]
+                        if isinstance(
+                            reaction[
+                                "subsystem"
+                            ],
+                            str,
+                        )
+                        else ""
+                    ),
+                    "candidate_gene": (
+                        candidates[
+                            int(index)
+                        ]
+                    ),
+                    "rank": rank,
+                    "score": float(
+                        scores[
+                            int(index)
+                        ]
+                    ),
+                    "curated_genes": ";".join(
+                        sorted(curated)
+                    ),
+                    "n_curated_genes": (
+                        len(curated)
+                    ),
+                    "reference_scope": (
+                        "training reactions"
+                    ),
                 }
             )
 
-    out_df = pd.DataFrame(rows_out).sort_values(["reaction_id", "score"], ascending=[True, False])
-    out_path = outdir / "top_candidates_xgb.csv"
-    out_df.to_csv(out_path, index=False)
-    print(f"Saved: {out_path}  ({len(out_df)} rows)")
+    output = pd.DataFrame(
+        rows,
+        columns=[
+            "reaction_id",
+            "reaction_name",
+            "subsystem",
+            "candidate_gene",
+            "rank",
+            "score",
+            "curated_genes",
+            "n_curated_genes",
+            "reference_scope",
+        ],
+    )
+
+    model_name = args.model_path.stem
+    output_path = (
+        outdir
+        / f"top_candidates_{model_name}.csv"
+    )
+    output.to_csv(
+        output_path,
+        index=False,
+    )
+
+    print(
+        f"Saved: {output_path} "
+        f"({len(output)} rows)"
+    )
 
 
 if __name__ == "__main__":
