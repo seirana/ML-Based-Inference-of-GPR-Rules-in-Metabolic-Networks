@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import subprocess
@@ -17,6 +18,38 @@ import sklearn
 import xgboost
 
 from gpr_ml import ensure_dir, save_json
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(
+            lambda: handle.read(1024 * 1024),
+            b"",
+        ):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_commit() -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "rev-parse",
+                "HEAD",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (
+        FileNotFoundError,
+        subprocess.CalledProcessError,
+    ):
+        return None
+    value = result.stdout.strip()
+    return value or None
 
 
 def run_step(
@@ -298,6 +331,10 @@ def main() -> None:
             sklearn.__version__
         ),
         "xgboost": xgboost.__version__,
+        "git_commit": git_commit(),
+        "input_model_sha256": file_sha256(
+            args.model
+        ),
     }
     save_json(
         metadata,
