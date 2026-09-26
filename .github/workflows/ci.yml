@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main, quality-upgrade]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and development tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint maintained code
+        run: |
+          python -m ruff check src tests run_pipeline.py
+
+      - name: Compile Python sources
+        run: python -m compileall -q src run_pipeline.py
+
+      - name: Run tests
+        run: python -m pytest
+
+      - name: Check command-line interfaces
+        run: |
+          gprml-pipeline --help
+          python src/00_parse_model.py --help
+          python src/00b_make_split.py --help
+          python src/01_build_pairs.py --help
+          python src/02_features.py --help
+          python src/03a_evaluate_heuristic.py --help
+          python src/03_train_logreg.py --help
+          python src/04_train_xgb.py --help
+          python src/05_evaluate.py --help
+          python src/06_rank_candidates.py --help
+          python src/07_group_cv_logreg.py --help
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build research container
+        run: docker build -t gpr-ml-ci .

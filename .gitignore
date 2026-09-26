@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+
+# Local configuration
+.env
+.env.*
+
+# External/raw data and generated tables
+data/raw/*
+!data/raw/help
+!data/raw/README.md
+
+data/processed/*
+!data/processed/help
+
+# Generated experiment outputs
+reports/models/*
+!reports/models/help
+reports/candidates/*
+!reports/candidates/help
+reports/metrics/*.json
+reports/run_metadata.json

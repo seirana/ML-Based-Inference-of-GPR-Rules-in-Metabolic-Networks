@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpr-ml"
+version = "0.2.0"
+description = "Interpretable machine learning for gene-reaction association inference in metabolic networks."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "cobra>=0.29,<1",
+  "joblib>=1.3,<2",
+  "numpy>=1.24,<3",
+  "pandas>=2.0,<4",
+  "pyarrow>=14,<24",
+  "scikit-learn>=1.3,<2",
+  "tqdm>=4.66,<5",
+  "xgboost>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-cov>=5,<7",
+  "ruff>=0.6,<1",
+]
+
+[project.scripts]
+gprml-pipeline = "gpr_ml.pipeline:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["gpr_ml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [
+  ".git",
+  ".venv",
+  "data",
+  "reports",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = ["E501"]
