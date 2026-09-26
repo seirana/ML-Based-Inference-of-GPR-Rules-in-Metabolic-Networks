@@ -1,129 +1,106 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-
-'''
-This script builds a labeled dataset of (reaction, gene) pairs for supervised learning (or evaluation) of which genes belong to which reactions (i.e., GPR association). It creates:
-positive pairs: genes that are already curated/known for a reaction (label = 1)
-negative pairs: genes sampled as “hard negatives” (plausible-but-wrong genes) (label = 0)
-and saves everything to pairs.parquet.
-'''
+"""Build positive and sampled negative reaction-gene pairs."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, List, Set
 
-import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
-from utils import ensure_dir, seed_everything
-
-
-def build_indices(reactions_df: pd.DataFrame) -> Dict:
-    # Map subsystem -> genes in that subsystem (via reactions' curated genes)
-    subsys_to_genes: Dict[str, Set[str]] = {}
-    # Map metabolite -> genes in reactions containing that metabolite
-    met_to_genes: Dict[str, Set[str]] = {}
-
-    for _, row in reactions_df.iterrows():
-        genes = set(row["genes"])
-        subsys = row["subsystem"]
-        if subsys and isinstance(subsys, str):
-            subsys_to_genes.setdefault(subsys, set()).update(genes)
-        for met in row["metabolites"]:
-            met_to_genes.setdefault(met, set()).update(genes)
-
-    return {"subsys_to_genes": subsys_to_genes, "met_to_genes": met_to_genes}
+from gpr_ml import (
+    build_pairs,
+    ensure_dir,
+    load_split,
+    save_json,
+)
 
 
-def sample_hard_negatives(
-    reaction_row: pd.Series,
-    all_genes: np.ndarray,
-    subsys_to_genes: Dict[str, Set[str]],
-    met_to_genes: Dict[str, Set[str]],
-    positives: Set[str],
-    n_needed: int,
-    rng: np.random.Generator,
-) -> List[str]:
-    candidates: Set[str] = set()
-
-    subsys = reaction_row["subsystem"]
-    if subsys and isinstance(subsys, str) and subsys in subsys_to_genes:
-        candidates |= subsys_to_genes[subsys]
-
-    # neighborhood by shared metabolites
-    for met in reaction_row["metabolites"]:
-        if met in met_to_genes:
-            candidates |= met_to_genes[met]
-
-    candidates -= positives
-
-    # If still small, fill from global
-    if len(candidates) < n_needed:
-        candidates |= set(all_genes.tolist())
-        candidates -= positives
-
-    candidates = list(candidates)
-    if len(candidates) <= n_needed:
-        return candidates
-
-    return rng.choice(candidates, size=n_needed, replace=False).tolist()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build reaction-gene pairs using only "
+            "training reactions as the candidate-reference graph."
+        )
+    )
+    parser.add_argument(
+        "--procdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--outdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--split",
+        default=None,
+        type=Path,
+        help=(
+            "Reaction split JSON. Defaults to "
+            "<procdir>/split_reactions.json."
+        ),
+    )
+    parser.add_argument(
+        "--neg_per_pos",
+        default=10,
+        type=int,
+    )
+    parser.add_argument(
+        "--seed",
+        default=13,
+        type=int,
+    )
+    return parser
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--procdir", default="data/processed", type=str)
-    ap.add_argument("--outdir", default="data/processed", type=str)
-    ap.add_argument("--neg_per_pos", default=10, type=int)
-    ap.add_argument("--seed", default=13, type=int)
-    args = ap.parse_args()
-
-    seed_everything(args.seed)
-    rng = np.random.default_rng(args.seed)
-
-    procdir = Path(args.procdir)
+    args = build_parser().parse_args()
     outdir = ensure_dir(args.outdir)
 
-    reactions_df = pd.read_parquet(procdir / "reactions.parquet")
-    genes_df = pd.read_parquet(procdir / "genes.parquet")
+    split_path = (
+        args.split
+        if args.split is not None
+        else args.procdir
+        / "split_reactions.json"
+    )
+    train_reactions, test_reactions = (
+        load_split(split_path)
+    )
 
-    all_genes = genes_df["gene_id"].values
-    idx = build_indices(reactions_df)
-    subsys_to_genes = idx["subsys_to_genes"]
-    met_to_genes = idx["met_to_genes"]
+    reactions_df = pd.read_parquet(
+        args.procdir / "reactions.parquet"
+    )
+    pairs_df, metadata = build_pairs(
+        reactions_df,
+        train_reactions=train_reactions,
+        test_reactions=test_reactions,
+        neg_per_pos=args.neg_per_pos,
+        seed=args.seed,
+    )
 
-    rows = []
-    for _, r in tqdm(reactions_df.iterrows(), total=len(reactions_df), desc="Building pairs"):
-        pos = set(r["genes"])
-        if len(pos) == 0:
-            continue
+    pairs_path = outdir / "pairs.parquet"
+    pairs_df.to_parquet(
+        pairs_path,
+        index=False,
+    )
+    save_json(
+        metadata,
+        outdir
+        / "pair_build_metadata.json",
+    )
 
-        # positives
-        for g in pos:
-            rows.append({"reaction_id": r["reaction_id"], "gene_id": g, "label": 1})
-
-        # negatives
-        n_neg = args.neg_per_pos * len(pos)
-        negs = sample_hard_negatives(
-            reaction_row=r,
-            all_genes=all_genes,
-            subsys_to_genes=subsys_to_genes,
-            met_to_genes=met_to_genes,
-            positives=pos,
-            n_needed=n_neg,
-            rng=rng,
-        )
-        for g in negs:
-            rows.append({"reaction_id": r["reaction_id"], "gene_id": g, "label": 0})
-
-    pairs_df = pd.DataFrame(rows).drop_duplicates(subset=["reaction_id", "gene_id"])
-    pairs_df.to_parquet(outdir / "pairs.parquet", index=False)
-    print(f"Saved: {outdir/'pairs.parquet'} ({len(pairs_df)} pairs, pos={pairs_df.label.sum()})")
+    print(
+        f"Saved: {pairs_path} "
+        f"({len(pairs_df)} pairs, "
+        f"pos={int(pairs_df['label'].sum())})"
+    )
+    print(
+        "Held-out positive links excluded because "
+        "their genes were unseen in training: "
+        f"{metadata['n_test_positive_links_excluded']}"
+    )
 
 
 if __name__ == "__main__":
