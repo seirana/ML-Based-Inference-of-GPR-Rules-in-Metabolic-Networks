@@ -27,12 +27,11 @@ dev = [
 ]
 
 [project.scripts]
-gprml-pipeline = "run_pipeline:main"
+gprml-pipeline = "gpr_ml.pipeline:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 packages = ["gpr_ml"]
-py-modules = ["run_pipeline"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
