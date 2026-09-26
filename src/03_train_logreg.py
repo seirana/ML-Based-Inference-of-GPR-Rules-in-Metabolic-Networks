@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-'''
-Train and evaluate a Logistic Regression baseline for predicting gene–reaction associations.
+"""Train the logistic-regression baseline on the stored reaction split."""
 
-The script loads engineered features for labeled (reaction, gene) pairs, applies a predefined
-reaction-wise train/test split (to avoid leakage across the same reaction), fits a class-balanced
-Logistic Regression model, and evaluates performance using PR-AUC, ROC-AUC, and reaction-level
-hit@k (whether a true gene is ranked in the top-k predictions per reaction). It saves metrics,
-the trained model, and the learned coefficients for interpretability.
-'''
 from __future__ import annotations
 
 import argparse
@@ -21,92 +10,198 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, roc_auc_score
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
-from utils import ensure_dir, save_json, seed_everything, load_split, indices_from_split
-
-FEATURE_COLS = [
-    "jacc_mets",
-    "overlap_mets",
-    "n_mets_rxn",
-    "n_mets_gene_fp",
-    "subsystem_match",
-    "n_subsys_gene_fp",
-]
+from gpr_ml import (
+    FEATURE_COLS,
+    classification_metrics,
+    ensure_dir,
+    indices_from_split,
+    load_split,
+    save_json,
+)
 
 
-def recall_at_k(df: pd.DataFrame, k: int) -> float:
-    # df contains test rows for many reactions, with columns: reaction_id, label, score
-    recalls = []
-    for rid, sub in df.groupby("reaction_id"):
-        pos = sub[sub["label"] == 1]
-        if len(pos) == 0:
-            continue
-        topk = sub.sort_values("score", ascending=False).head(k)
-        hit = int((topk["label"] == 1).any())
-        # reaction-level hit@k; you can also do fraction of positives recovered, but hit@k is simplest
-        recalls.append(hit)
-    return float(np.mean(recalls)) if recalls else 0.0
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train a standardized logistic-regression "
+            "baseline for GPR association prediction."
+        )
+    )
+    parser.add_argument(
+        "--procdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--outdir",
+        default=Path("reports/metrics"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--model_out",
+        default=Path(
+            "reports/models/logreg.joblib"
+        ),
+        type=Path,
+    )
+    parser.add_argument(
+        "--seed",
+        default=13,
+        type=int,
+    )
+    parser.add_argument(
+        "--bootstrap_reps",
+        default=500,
+        type=int,
+    )
+    return parser
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--procdir", default="data/processed", type=str)
-    ap.add_argument("--outdir", default="reports/metrics", type=str)
-    ap.add_argument("--model_out", default="reports/models/logreg.joblib", type=str)
-    ap.add_argument("--seed", default=13, type=int)
-    args = ap.parse_args()
+    args = build_parser().parse_args()
+    if args.bootstrap_reps < 0:
+        raise ValueError(
+            "bootstrap_reps must be non-negative"
+        )
 
-    seed_everything(args.seed)
-    ensure_dir(Path(args.model_out).parent)
+    ensure_dir(args.model_out.parent)
     outdir = ensure_dir(args.outdir)
 
-    df = pd.read_parquet(Path(args.procdir) / "features.parquet")
-    X = df[FEATURE_COLS].values
-    y = df["label"].values
-
-    train_r, test_r = load_split(Path(args.procdir) / "split_reactions.json")
-    train_idx, test_idx = indices_from_split(df, train_r, test_r)
-
-
-    Xtr, Xte = X[train_idx], X[test_idx]
-    ytr, yte = y[train_idx], y[test_idx]
-
-    clf = LogisticRegression(
-        max_iter=2000,
-        class_weight="balanced",
-        solver="lbfgs",
+    frame = pd.read_parquet(
+        args.procdir / "features.parquet"
     )
-    clf.fit(Xtr, ytr)
+    train_reactions, test_reactions = (
+        load_split(
+            args.procdir
+            / "split_reactions.json"
+        )
+    )
+    train_idx, test_idx = indices_from_split(
+        frame,
+        train_reactions,
+        test_reactions,
+    )
 
-    proba = clf.predict_proba(Xte)[:, 1]
-    ap_score = average_precision_score(yte, proba)
-    roc = roc_auc_score(yte, proba)
+    x = frame[FEATURE_COLS].to_numpy(
+        dtype=np.float32
+    )
+    y = frame["label"].to_numpy(
+        dtype=int
+    )
 
-    test_df = df.iloc[test_idx].copy()
-    test_df["score"] = proba
+    x_train = x[train_idx]
+    y_train = y[train_idx]
+    x_test = x[test_idx]
 
-    metrics = {
-        "model": "logreg",
-        "average_precision": float(ap_score),
-        "roc_auc": float(roc),
-        "hit_at_5": recall_at_k(test_df, 5),
-        "hit_at_10": recall_at_k(test_df, 10),
-        "hit_at_20": recall_at_k(test_df, 20),
-        "n_test_pairs": int(len(test_df)),
-        "n_test_pos": int(test_df["label"].sum()),
-    }
+    if len(np.unique(y_train)) < 2:
+        raise ValueError(
+            "Training split must contain both classes."
+        )
 
-    save_json(metrics, Path(outdir) / "logreg_metrics.json")
-    joblib.dump(clf, args.model_out)
+    model = Pipeline(
+        [
+            (
+                "scale",
+                StandardScaler(),
+            ),
+            (
+                "model",
+                LogisticRegression(
+                    max_iter=2000,
+                    class_weight="balanced",
+                    solver="lbfgs",
+                    random_state=args.seed,
+                ),
+            ),
+        ]
+    )
+    model.fit(
+        x_train,
+        y_train,
+    )
 
-    # Save coefficients for interpretability
-    coef = dict(zip(FEATURE_COLS, clf.coef_[0].tolist()))
-    save_json({"intercept": float(clf.intercept_[0]), "coef": coef}, Path(outdir) / "logreg_coefficients.json")
+    scores = model.predict_proba(
+        x_test
+    )[:, 1]
+    test_frame = frame.iloc[
+        test_idx
+    ].copy()
+
+    metrics = classification_metrics(
+        test_frame,
+        scores,
+        bootstrap_reps=args.bootstrap_reps,
+        seed=args.seed,
+    )
+    metrics.update(
+        {
+            "model": "logistic_regression",
+            "feature_cols": FEATURE_COLS,
+            "seed": int(args.seed),
+            "split_source": (
+                "data/processed/"
+                "split_reactions.json"
+            ),
+            "scaling": "StandardScaler",
+        }
+    )
+
+    save_json(
+        metrics,
+        outdir / "logreg_metrics.json",
+    )
+    joblib.dump(
+        model,
+        args.model_out,
+    )
+
+    scaler = model.named_steps["scale"]
+    classifier = model.named_steps["model"]
+    save_json(
+        {
+            "feature_cols": FEATURE_COLS,
+            "standardized_coefficients": {
+                name: float(value)
+                for name, value
+                in zip(
+                    FEATURE_COLS,
+                    classifier.coef_[0],
+                    strict=True,
+                )
+            },
+            "intercept": float(
+                classifier.intercept_[0]
+            ),
+            "scaler_mean": {
+                name: float(value)
+                for name, value
+                in zip(
+                    FEATURE_COLS,
+                    scaler.mean_,
+                    strict=True,
+                )
+            },
+            "scaler_scale": {
+                name: float(value)
+                for name, value
+                in zip(
+                    FEATURE_COLS,
+                    scaler.scale_,
+                    strict=True,
+                )
+            },
+        },
+        outdir
+        / "logreg_coefficients.json",
+    )
 
     print(metrics)
-    print(f"Saved model: {args.model_out}")
+    print(
+        f"Saved model: {args.model_out}"
+    )
 
 
 if __name__ == "__main__":
