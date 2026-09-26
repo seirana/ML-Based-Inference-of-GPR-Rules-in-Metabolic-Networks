@@ -1,93 +1,103 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-'''
-Generate feature vectors for labeled (reaction, gene) pairs.
-
-For each reaction–gene pair from pairs.parquet, this script derives simple,
-interpretable features based on the overlap between the reaction’s metabolite set
-and the gene’s metabolite/subsystem "fingerprints" (constructed from all reactions
-associated with the gene). The resulting feature table (features.parquet) is used
-for downstream supervised learning and evaluation of gene–reaction associations.
-'''
+"""Create leakage-aware features for reaction-gene pairs."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Dict, Set, Tuple
 
-import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
-from utils import ensure_dir
-
-
-def jaccard(a: Set[str], b: Set[str]) -> float:
-    if not a and not b:
-        return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return float(inter) / float(union) if union else 0.0
+from gpr_ml import (
+    FEATURE_COLS,
+    build_feature_table,
+    ensure_dir,
+    load_split,
+    save_json,
+)
 
 
-def load_maps(procdir: Path) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, str], Dict[str, Set[str]]]:
-    reactions_df = pd.read_parquet(procdir / "reactions.parquet")
-    genes_df = pd.read_parquet(procdir / "genes.parquet")
-
-    rxn_to_mets = {r.reaction_id: set(r.metabolites) for r in reactions_df.itertuples(index=False)}
-    rxn_to_subsys = {r.reaction_id: (r.subsystem if isinstance(r.subsystem, str) else "") for r in reactions_df.itertuples(index=False)}
-
-    gene_to_metsfp = {g.gene_id: set(g.metabolites_fp) for g in genes_df.itertuples(index=False)}
-    gene_to_subsysfp = {g.gene_id: set(g.subsystems_fp) for g in genes_df.itertuples(index=False)}
-
-    return rxn_to_mets, gene_to_metsfp, rxn_to_subsys, gene_to_subsysfp
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Compute reaction-gene features from "
+            "training-reaction reference information."
+        )
+    )
+    parser.add_argument(
+        "--procdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--outdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--split",
+        default=None,
+        type=Path,
+    )
+    return parser
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--procdir", default="data/processed", type=str)
-    ap.add_argument("--outdir", default="data/processed", type=str)
-    args = ap.parse_args()
-
-    procdir = Path(args.procdir)
+    args = build_parser().parse_args()
     outdir = ensure_dir(args.outdir)
+    split_path = (
+        args.split
+        if args.split is not None
+        else args.procdir
+        / "split_reactions.json"
+    )
 
-    pairs_df = pd.read_parquet(procdir / "pairs.parquet")
-    rxn_to_mets, gene_to_metsfp, rxn_to_subsys, gene_to_subsysfp = load_maps(procdir)
+    train_reactions, _ = load_split(
+        split_path
+    )
+    reactions_df = pd.read_parquet(
+        args.procdir / "reactions.parquet"
+    )
+    pairs_df = pd.read_parquet(
+        args.procdir / "pairs.parquet"
+    )
 
-    feats = []
-    for r_id, g_id, y in tqdm(pairs_df[["reaction_id", "gene_id", "label"]].itertuples(index=False), total=len(pairs_df), desc="Computing features"):
-        rm = rxn_to_mets.get(r_id, set())
-        gm = gene_to_metsfp.get(g_id, set())
+    features_df = build_feature_table(
+        pairs_df,
+        reactions_df,
+        train_reactions=train_reactions,
+    )
 
-        subsys = rxn_to_subsys.get(r_id, "")
-        g_sub = gene_to_subsysfp.get(g_id, set())
+    output_path = (
+        outdir / "features.parquet"
+    )
+    features_df.to_parquet(
+        output_path,
+        index=False,
+    )
+    save_json(
+        {
+            "feature_cols": FEATURE_COLS,
+            "reference_scope": (
+                "training reactions only"
+            ),
+            "training_pair_policy": (
+                "gene fingerprints exclude the "
+                "reaction currently being scored"
+            ),
+            "n_rows": int(
+                len(features_df)
+            ),
+        },
+        outdir
+        / "feature_metadata.json",
+    )
 
-        inter = len(rm & gm)
-        feats.append(
-            {
-                "reaction_id": r_id,
-                "gene_id": g_id,
-                "label": int(y),
-                "jacc_mets": jaccard(rm, gm),
-                "overlap_mets": inter,
-                "n_mets_rxn": len(rm),
-                "n_mets_gene_fp": len(gm),
-                "subsystem_match": 1 if (subsys and subsys in g_sub) else 0,
-                "n_subsys_gene_fp": len(g_sub),
-            }
-        )
-
-    feat_df = pd.DataFrame(feats)
-    feat_df.to_parquet(outdir / "features.parquet", index=False)
-    print(f"Saved: {outdir/'features.parquet'} ({len(feat_df)} rows)")
+    print(
+        f"Saved: {output_path} "
+        f"({len(features_df)} rows)"
+    )
 
 
 if __name__ == "__main__":
     main()
-
-
