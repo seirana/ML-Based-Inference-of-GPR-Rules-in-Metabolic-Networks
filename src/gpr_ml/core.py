@@ -361,9 +361,11 @@ def build_pairs(
                 indices["metabolite_to_genes"].get(metabolite, set())
             )
 
-        candidates.update(train_gene_vocabulary)
         candidates -= curated
         n_negatives = neg_per_pos * len(positives)
+        if len(candidates) < n_negatives:
+            candidates.update(train_gene_vocabulary)
+            candidates -= curated
 
         for gene in _sample_candidates(
             candidates,
