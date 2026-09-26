@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-@author: seirana
-"""
-
-'''
-Loads a reaction-level table (reactions.parquet) that was previously generated from an SBML metabolic model.
-Splits the reactions into training and test sets using:
-a fixed random seed
-a configurable test fraction
-Saves the split (reaction IDs or subsets) to a JSON file for reproducible downstream experiments.
-Prints a short summary of the split sizes.
-'''
+"""Create and persist a reaction-wise train/test split."""
 
 from __future__ import annotations
 
@@ -20,28 +8,78 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils import ensure_dir, make_reaction_split, save_split
+from gpr_ml import (
+    ensure_dir,
+    make_reaction_split,
+    save_split,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Create a reproducible reaction-wise "
+            "train/test split."
+        )
+    )
+    parser.add_argument(
+        "--procdir",
+        default=Path("data/processed"),
+        type=Path,
+    )
+    parser.add_argument(
+        "--out",
+        default=Path(
+            "data/processed/split_reactions.json"
+        ),
+        type=Path,
+    )
+    parser.add_argument(
+        "--seed",
+        default=13,
+        type=int,
+    )
+    parser.add_argument(
+        "--test_size",
+        default=0.2,
+        type=float,
+    )
+    return parser
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--procdir", default="data/processed", type=str)
-    ap.add_argument("--out", default="data/processed/split_reactions.json", type=str)
-    ap.add_argument("--seed", default=13, type=int)
-    ap.add_argument("--test_size", default=0.2, type=float)
-    args = ap.parse_args()
+    args = build_parser().parse_args()
+    ensure_dir(args.out.parent)
 
-    procdir = Path(args.procdir)
-    out_path = Path(args.out)
-    ensure_dir(out_path.parent)
+    reactions_path = (
+        args.procdir / "reactions.parquet"
+    )
+    reactions_df = pd.read_parquet(
+        reactions_path
+    )
 
-    reactions_df = pd.read_parquet(procdir / "reactions.parquet")
-    train_r, test_r = make_reaction_split(reactions_df, seed=args.seed, test_size=args.test_size)
-    save_split(train_r, test_r, out_path)
+    train_df, test_df = (
+        make_reaction_split(
+            reactions_df,
+            seed=args.seed,
+            test_size=args.test_size,
+        )
+    )
+    save_split(
+        train_df,
+        test_df,
+        args.out,
+        seed=args.seed,
+        test_size=args.test_size,
+    )
 
-    print(f"Saved split to: {out_path}")
-    print(f"Train reactions: {len(train_r)}")
-    print(f"Test reactions:  {len(test_r)}")
+    print(f"Saved split to: {args.out}")
+    print(
+        f"Train reactions: {len(train_df)}"
+    )
+    print(
+        f"Test reactions:  {len(test_df)}"
+    )
 
 
 if __name__ == "__main__":
